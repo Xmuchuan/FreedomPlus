@@ -61,6 +61,14 @@ class DownloadLogic(
             .getObjectField<Any>("video")
             ?.getObjectField<Any>("h264PlayAddr")
             ?.getObjectField<List<String>>("urlList")
+            ?.map { url ->
+                // 去除水印参数
+                if (url.contains("watermark")) {
+                    url.replace("watermark=1", "watermark=0")
+                } else {
+                    url
+                }
+            }
             ?: listOf()
 
         //图文列表
@@ -94,19 +102,71 @@ class DownloadLogic(
      * @param deAweme
      */
     private fun showChoiceDialog(deAweme: DeAweme) {
-        val items = arrayOf(if (deAweme.videoUrlList.isNotEmpty()) "视频" else "图片", "背景音乐")
+        val items = mutableListOf<String>()
+        if (deAweme.videoUrlList.isNotEmpty()) items.add("视频")
+        if (deAweme.imageUrlStructList.isNotEmpty()) items.add("图片")
+        if (deAweme.musicUrlList.isNotEmpty()) items.add("背景音乐")
+        items.add("全部下载")
+        
         hook.showChoiceDialog(
             activity = activity,
             title = "Freedom+",
-            items = items,
+            items = items.toTypedArray(),
             onChoice = { _, item, _ ->
                 when (item) {
                     "视频" -> downloadVideo(activity, deAweme)
                     "图片" -> downloadImages(activity, deAweme)
                     "背景音乐" -> downloadMusic(activity, deAweme)
+                    "全部下载" -> downloadAll(activity, deAweme)
                 }
             }
         )
+    }
+
+    /**
+     * 批量下载所有内容
+     * @param deAweme
+     */
+    private fun downloadAll(activity: Activity, deAweme: DeAweme) {
+        val batchManager = BatchDownloadManager(activity)
+        
+        // 构建文件名前缀
+        val fileNamePrefix = if (deAweme.desc.isBlank()) {
+            "${deAweme.nickname.pureFileName}_${deAweme.shortId}_${System.currentTimeMillis() / 1000}"
+        } else {
+            "${deAweme.nickname.pureFileName}_${deAweme.shortId}_${deAweme.desc.pureFileName.subMax()}"
+        }
+        
+        // 默认下载路径
+        val freedomDir = Config.getFreedomDir(activity)
+        var parentPath = freedomDir.child("video")
+        if (isOwnerDir) parentPath = parentPath.child("${deAweme.nickname}(${deAweme.shortId})")
+        
+        // 添加视频下载任务
+        if (deAweme.videoUrlList.isNotEmpty()) {
+            val videoFile = File(parentPath.need(), "${fileNamePrefix}.mp4")
+            batchManager.addTask(deAweme.videoUrlList.first(), videoFile, "video")
+        }
+        
+        // 添加图片下载任务
+        if (deAweme.imageUrlStructList.isNotEmpty()) {
+            val pictureDir = File(freedomDir.child("picture").need(), fileNamePrefix).need()
+            deAweme.imageUrlStructList.forEachIndexed { index, urlStruct ->
+                val imageFile = File(pictureDir, "${index + 1}.jpg")
+                batchManager.addTask(urlStruct.imageUrlList.first(), imageFile, "image")
+            }
+        }
+        
+        // 添加音乐下载任务
+        if (deAweme.musicUrlList.isNotEmpty()) {
+            var musicPath = freedomDir.child("music")
+            if (isOwnerDir) musicPath = musicPath.child("${deAweme.nickname}(${deAweme.shortId})")
+            val musicFile = File(musicPath.need(), "${fileNamePrefix}.mp3")
+            batchManager.addTask(deAweme.musicUrlList.first(), musicFile, "music")
+        }
+        
+        // 开始批量下载
+        batchManager.start()
     }
 
     /**
